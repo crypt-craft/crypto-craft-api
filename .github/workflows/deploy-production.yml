@@ -1,0 +1,483 @@
+# Production Deployment Pipeline
+name: Deploy to Production
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to deploy (e.g., v1.0.0)'
+        required: true
+        type: string
+      skip_tests:
+        description: 'Skip tests (emergency deployment only)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  NODE_VERSION: '18'
+  DOCKER_REGISTRY: ghcr.io
+  IMAGE_NAME: cryptocraft/api
+
+jobs:
+  # Pre-deployment validation
+  validate:
+    name: Pre-deployment Validation
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Extract version
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          VERSION="${{ inputs.version }}"
+        else
+          VERSION=${GITHUB_REF#refs/tags/}
+        fi
+        
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+        # Check if this is a pre-release (contains alpha, beta, rc)
+        if [[ $VERSION =~ (alpha|beta|rc) ]]; then
+          echo "is_prerelease=true" >> $GITHUB_OUTPUT
+        else
+          echo "is_prerelease=false" >> $GITHUB_OUTPUT
+        fi
+        
+        echo "Deploying version: $VERSION"
+
+    - name: Validate version format
+      run: |
+        VERSION=${{ steps.version.outputs.version }}
+        if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
+          echo "❌ Invalid version format: $VERSION"
+          echo "Expected format: v1.0.0 or v1.0.0-beta"
+          exit 1
+        fi
+        echo "✅ Version format is valid"
+
+    - name: Check if version exists
+      run: |
+        VERSION=${{ steps.version.outputs.version }}
+        if git rev-parse "$VERSION" >/dev/null 2>&1; then
+          echo "✅ Version tag exists"
+        else
+          echo "❌ Version tag does not exist: $VERSION"
+          exit 1
+        fi
+
+  # Run full test suite (unless skipped)
+  test:
+    name: Full Test Suite
+    uses: ./.github/workflows/test.yml
+    needs: [validate]
+    if: ${{ !inputs.skip_tests }}
+
+  # Build production images
+  build:
+    name: Build Production Images
+    runs-on: ubuntu-latest
+    needs: [validate, test]
+    if: always() && (needs.test.result == 'success' || inputs.skip_tests)
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build.outputs.digest }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ needs.validate.outputs.version }}
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.DOCKER_REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+          type=raw,value=latest,enable={{is_default_branch}}
+          type=raw,value=production
+
+    - name: Build and push API image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./docker/Dockerfile.production
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          NODE_ENV=production
+        platforms: linux/amd64,linux/arm64
+
+    - name: Build and push Nginx image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./nginx
+        file: ./nginx/Dockerfile
+        push: true
+        tags: |
+          ${{ env.DOCKER_REGISTRY }}/cryptocraft/nginx:${{ needs.validate.outputs.version }}
+          ${{ env.DOCKER_REGISTRY }}/cryptocraft/nginx:latest
+          ${{ env.DOCKER_REGISTRY }}/cryptocraft/nginx:production
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: linux/amd64,linux/arm64
+
+    - name: Generate SBOM
+      uses: anchore/sbom-action@v0
+      with:
+        image: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.validate.outputs.version }}
+        format: spdx-json
+        output-file: sbom.spdx.json
+
+    - name: Upload SBOM
+      uses: actions/upload-artifact@v3
+      with:
+        name: sbom
+        path: sbom.spdx.json
+
+  # Security scan
+  security-scan:
+    name: Production Security Scan
+    runs-on: ubuntu-latest
+    needs: [build]
+    
+    steps:
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ needs.build.outputs.image_tag }}
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: Check for critical vulnerabilities
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ needs.build.outputs.image_tag }}
+        format: 'json'
+        output: 'trivy-results.json'
+        exit-code: '1'
+        severity: 'CRITICAL,HIGH'
+
+  # Approval gate for production deployment
+  approval:
+    name: Production Deployment Approval
+    runs-on: ubuntu-latest
+    needs: [validate, build, security-scan]
+    environment: production-approval
+    if: ${{ needs.validate.outputs.is_prerelease == 'false' }}
+    
+    steps:
+    - name: Request approval
+      run: |
+        echo "🚀 Production deployment requested"
+        echo "Version: ${{ needs.validate.outputs.version }}"
+        echo "Image: ${{ needs.build.outputs.image_tag }}"
+        echo ""
+        echo "Please review and approve this deployment."
+
+  # Blue-Green deployment to production
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [validate, build, security-scan, approval]
+    if: always() && (needs.approval.result == 'success' || needs.validate.outputs.is_prerelease == 'true')
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ needs.validate.outputs.version }}
+
+    - name: Setup production environment
+      run: |
+        cat > config/production.env << EOF
+        NODE_ENV=production
+        API_VERSION=${{ needs.validate.outputs.version }}
+        DATABASE_URL=${{ secrets.PROD_DATABASE_URL }}
+        REDIS_URL=${{ secrets.PROD_REDIS_URL }}
+        SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
+        JWT_SECRET=${{ secrets.PROD_JWT_SECRET }}
+        RATE_LIMIT_RPM=1000
+        LOG_LEVEL=warn
+        NEW_RELIC_LICENSE_KEY=${{ secrets.NEW_RELIC_LICENSE_KEY }}
+        POSTGRES_DB=${{ secrets.PROD_POSTGRES_DB }}
+        POSTGRES_USER=${{ secrets.PROD_POSTGRES_USER }}
+        POSTGRES_PASSWORD=${{ secrets.PROD_POSTGRES_PASSWORD }}
+        GRAFANA_ADMIN_PASSWORD=${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+        GRAFANA_SECRET_KEY=${{ secrets.GRAFANA_SECRET_KEY }}
+        GRAFANA_DOMAIN=${{ secrets.GRAFANA_DOMAIN }}
+        SMTP_HOST=${{ secrets.SMTP_HOST }}
+        SMTP_USER=${{ secrets.SMTP_USER }}
+        SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+        EOF
+
+    - name: Deploy to production cluster
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.PROD_HOST }}
+        username: ${{ secrets.PROD_USER }}
+        key: ${{ secrets.PROD_SSH_KEY }}
+        port: ${{ secrets.PROD_PORT }}
+        script: |
+          # Navigate to project directory
+          cd /var/www/cryptocraft-api
+          
+          # Pull latest code
+          git fetch origin
+          git checkout ${{ needs.validate.outputs.version }}
+          
+          # Copy environment config
+          echo "${{ secrets.PROD_ENV_FILE }}" > config/production.env
+          
+          # Update Docker stack
+          docker stack deploy -c docker-compose.production.yml cryptocraft
+          
+          # Wait for services to be ready
+          sleep 60
+          
+          # Health check
+          timeout 300 bash -c 'until curl -f https://api.cryptocraft.com/health; do sleep 10; done'
+          
+          # Run database migrations (if needed)
+          docker service exec cryptocraft_api npm run db:migrate:prod
+          
+          # Clean up old images
+          docker image prune -f
+
+  # Post-deployment validation
+  validate-deployment:
+    name: Validate Production Deployment
+    runs-on: ubuntu-latest
+    needs: [deploy, validate]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run production smoke tests
+      run: npm run test:smoke:production
+      env:
+        PROD_API_URL: ${{ secrets.PROD_API_URL }}
+        PROD_API_KEY: ${{ secrets.PROD_API_KEY }}
+
+    - name: Validate API endpoints
+      run: |
+        # Health check
+        curl -f ${{ secrets.PROD_API_URL }}/health
+        
+        # Version endpoint
+        VERSION_RESPONSE=$(curl -s ${{ secrets.PROD_API_URL }}/api/version)
+        DEPLOYED_VERSION=$(echo $VERSION_RESPONSE | jq -r '.version')
+        
+        if [ "$DEPLOYED_VERSION" != "${{ needs.validate.outputs.version }}" ]; then
+          echo "❌ Version mismatch! Expected: ${{ needs.validate.outputs.version }}, Got: $DEPLOYED_VERSION"
+          exit 1
+        fi
+        
+        echo "✅ Version verified: $DEPLOYED_VERSION"
+
+    - name: Run basic functionality tests
+      run: |
+        # Test GraphQL endpoint
+        curl -X POST ${{ secrets.PROD_API_URL }}/graphql \
+          -H "Content-Type: application/json" \
+          -d '{"query": "{ __schema { types { name } } }"}' \
+          -f
+        
+        echo "✅ GraphQL endpoint is working"
+
+  # Performance monitoring
+  performance-monitor:
+    name: Post-Deployment Performance
+    runs-on: ubuntu-latest
+    needs: [validate-deployment]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Artillery
+      run: npm install -g artillery
+
+    - name: Run production performance test
+      run: |
+        artillery run tests/performance/production-monitor.yml \
+          --environment production \
+          --output production-perf.json
+      env:
+        PROD_API_URL: ${{ secrets.PROD_API_URL }}
+
+    - name: Validate performance metrics
+      run: |
+        RESPONSE_TIME=$(jq '.aggregate.latency.median' production-perf.json)
+        ERROR_RATE=$(jq '.aggregate.errors' production-perf.json)
+        
+        if (( $(echo "$RESPONSE_TIME > 500" | bc -l) )); then
+          echo "⚠️ High response time detected: ${RESPONSE_TIME}ms"
+        fi
+        
+        if [ "$ERROR_RATE" -gt 0 ]; then
+          echo "⚠️ Errors detected: $ERROR_RATE"
+        fi
+        
+        echo "✅ Performance check completed"
+
+  # Create GitHub release
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate, validate-deployment]
+    if: ${{ needs.validate.outputs.is_prerelease == 'false' }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ needs.validate.outputs.version }}
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Generate changelog from git commits
+        CHANGELOG=$(git log --pretty=format:"- %s (%h)" $(git describe --tags --abbrev=0 HEAD^)..HEAD)
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGELOG" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ needs.validate.outputs.version }}
+        release_name: Release ${{ needs.validate.outputs.version }}
+        body: |
+          ## 🚀 CryptoCraft API ${{ needs.validate.outputs.version }}
+          
+          ### Changes
+          ${{ steps.changelog.outputs.changelog }}
+          
+          ### Deployment Info
+          - **API Version**: ${{ needs.validate.outputs.version }}
+          - **Deployed**: $(date -u)
+          - **Docker Image**: `${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.validate.outputs.version }}`
+          
+          ### Links
+          - [Production API](https://api.cryptocraft.com)
+          - [GraphQL Playground](https://api.cryptocraft.com/graphql)
+          - [API Documentation](https://docs.cryptocraft.com)
+        draft: false
+        prerelease: false
+
+  # Rollback capability
+  setup-rollback:
+    name: Setup Rollback Capability
+    runs-on: ubuntu-latest
+    needs: [validate-deployment]
+    if: always()
+    
+    steps:
+    - name: Tag successful deployment
+      if: needs.validate-deployment.result == 'success'
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.PROD_HOST }}
+        username: ${{ secrets.PROD_USER }}
+        key: ${{ secrets.PROD_SSH_KEY }}
+        port: ${{ secrets.PROD_PORT }}
+        script: |
+          # Tag current deployment as last-known-good
+          docker tag ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.validate.outputs.version }} \
+                     ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:last-known-good
+
+  # Notification
+  notify:
+    name: Deployment Notification
+    runs-on: ubuntu-latest
+    needs: [validate, deploy, validate-deployment, release]
+    if: always()
+    
+    steps:
+    - name: Notify success
+      if: ${{ needs.deploy.result == 'success' && needs.validate-deployment.result == 'success' }}
+      run: |
+        echo "🎉 Production deployment successful!"
+        echo "Version: ${{ needs.validate.outputs.version }}"
+        echo "URL: ${{ secrets.PROD_API_URL }}"
+
+    - name: Notify failure
+      if: ${{ needs.deploy.result == 'failure' || needs.validate-deployment.result == 'failure' }}
+      run: |
+        echo "🚨 Production deployment failed!"
+        echo "Deploy status: ${{ needs.deploy.result }}"
+        echo "Validation status: ${{ needs.validate-deployment.result }}"
+        exit 1
+
+    # Send notifications to multiple channels
+    - name: Send Slack notification
+      if: always()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#production-deployments'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        fields: repo,message,commit,author,action,eventName,ref,workflow
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+
+    - name: Send Discord notification
+      if: always()
+      uses: Ilshidur/action-discord@master
+      env:
+        DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+      with:
+        args: |
+          🚀 **CryptoCraft API Production Deployment**
+          
+          **Version**: ${{ needs.validate.outputs.version }}
+          **Status**: ${{ job.status == 'success' && '✅ Success' || '❌ Failed' }}
+          **URL**: ${{ secrets.PROD_API_URL }}
+          **Commit**: ${{ github.sha }}
+          **Author**: ${{ github.actor }}

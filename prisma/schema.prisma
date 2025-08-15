@@ -1,0 +1,195 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model
+model User {
+  id              String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  walletAddress   String    @unique @map("wallet_address") @db.VarChar(44)
+  email           String?   @unique @db.VarChar(255)
+  username        String?   @db.VarChar(50)
+  profileImageUrl String?   @map("profile_image_url")
+  bio             String?
+  isVerified      Boolean   @default(false) @map("is_verified")
+  isActive        Boolean   @default(true) @map("is_active")
+  lastLoginAt     DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  tokens           Token[]
+  userSessions     UserSession[]
+  airdropCampaigns AirdropCampaign[]
+
+  @@map("users")
+}
+
+// Token model
+model Token {
+  id          String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  mintAddress String    @unique @map("mint_address") @db.VarChar(44)
+  creatorId   String?   @map("creator_id") @db.Uuid
+  blockchain  String    @default("solana") @db.VarChar(20)
+  name        String    @db.VarChar(100)
+  symbol      String    @db.VarChar(10)
+  decimals    Int       @default(9)
+  supply      Decimal   @db.Decimal(20, 0)
+  tokenType   TokenType @default(FUNGIBLE) @map("token_type")
+  metadata    Json?     @db.JsonB
+  isVerified  Boolean   @default(false) @map("is_verified")
+  isFrozen    Boolean   @default(false) @map("is_frozen")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  creator            User?             @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  airdropCampaigns   AirdropCampaign[]
+  transactions       Transaction[]
+
+  @@index([creatorId])
+  @@index([mintAddress])
+  @@index([symbol])
+  @@map("tokens")
+}
+
+// User sessions for JWT tokens
+model UserSession {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  token     String   @map("refresh_token")
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("user_sessions")
+}
+
+// Transactions model
+model Transaction {
+  id           String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  txHash       String?           @unique @map("tx_hash") @db.VarChar(128)
+  type         String            @map("transaction_type") @db.VarChar(50)
+  status       TransactionStatus @default(PENDING)
+  amount       Decimal?          @db.Decimal(20, 9)
+  fee          Decimal?          @db.Decimal(20, 9)
+  userId       String            @map("user_id") @db.Uuid
+  tokenId      String?           @map("token_id") @db.Uuid
+  blockchain   String            @default("solana") @db.VarChar(20)
+  network      NetworkType       @default(DEVNET)
+  blockHeight  BigInt?           @map("block_height")
+  signature    String?           @db.VarChar(256)
+  metadata     Json?             @db.JsonB
+  errorMessage String?           @map("error_message")
+  createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  token Token? @relation(fields: [tokenId], references: [id], onDelete: SetNull)
+
+  @@index([txHash])
+  @@index([status])
+  @@index([type])
+  @@index([userId])
+  @@index([tokenId])
+  @@map("transactions")
+}
+
+// Airdrop campaigns
+model AirdropCampaign {
+  id             String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  creatorId      String         @map("creator_id") @db.Uuid
+  tokenId        String         @map("token_id") @db.Uuid
+  name           String         @db.VarChar(100)
+  description    String?
+  totalAmount    Decimal        @map("total_amount") @db.Decimal(20, 9)
+  recipientsCount Int           @default(0) @map("recipients_count")
+  status         AirdropStatus  @default(DRAFT)
+  priority       AirdropPriority @default(NORMAL)
+  scheduledAt    DateTime?      @map("scheduled_at") @db.Timestamptz(6)
+  startedAt      DateTime?      @map("started_at") @db.Timestamptz(6)
+  completedAt    DateTime?      @map("completed_at") @db.Timestamptz(6)
+  metadata       Json?          @db.JsonB
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  creator    User                @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  token      Token               @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  recipients AirdropRecipient[]
+
+  @@index([creatorId])
+  @@index([tokenId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@map("airdrop_campaigns")
+}
+
+// Airdrop recipients
+model AirdropRecipient {
+  id         String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  campaignId String        @map("campaign_id") @db.Uuid
+  address    String        @db.VarChar(44)
+  amount     Decimal       @db.Decimal(20, 9)
+  status     TransactionStatus @default(PENDING)
+  txHash     String?       @map("tx_hash") @db.VarChar(128)
+  errorMessage String?     @map("error_message")
+  processedAt DateTime?    @map("processed_at") @db.Timestamptz(6)
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  campaign AirdropCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, address])
+  @@index([campaignId])
+  @@index([status])
+  @@map("airdrop_recipients")
+}
+
+// Enums
+enum TokenType {
+  FUNGIBLE
+  NON_FUNGIBLE
+  MEMECOIN
+}
+
+enum TransactionStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+  REJECTED
+}
+
+enum AirdropStatus {
+  DRAFT
+  SCHEDULED
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum AirdropPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum NetworkType {
+  DEVNET
+  TESTNET
+  MAINNET
+}

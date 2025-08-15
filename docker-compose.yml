@@ -1,0 +1,176 @@
+# Development Environment Docker Compose
+version: '3.8'
+
+services:
+  # API Service
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.local
+    container_name: cryptocraft-api-dev
+    ports:
+      - "4000:4000"  # API and GraphQL
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://cryptocraft_user:dev_password@postgres:5432/cryptocraft_dev
+      - REDIS_URL=redis://redis:6379
+      - SOLANA_RPC_URL=https://api.devnet.solana.com
+      - JWT_SECRET=dev_jwt_secret_change_in_production
+      - RATE_LIMIT_RPM=100
+      - LOG_LEVEL=debug
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - cryptocraft-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: cryptocraft-postgres-dev
+    environment:
+      - POSTGRES_DB=cryptocraft_dev
+      - POSTGRES_USER=cryptocraft_user
+      - POSTGRES_PASSWORD=dev_password
+      - POSTGRES_INITDB_ARGS="--encoding=UTF-8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./database/migrations:/migrations
+    ports:
+      - "5432:5432"
+    networks:
+      - cryptocraft-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cryptocraft_user -d cryptocraft_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and queues
+  redis:
+    image: redis:7-alpine
+    container_name: cryptocraft-redis-dev
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - cryptocraft-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Nginx for reverse proxy
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: cryptocraft-nginx-dev
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.local.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - api
+    networks:
+      - cryptocraft-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Queue Worker (Bull)
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.local
+    container_name: cryptocraft-worker-dev
+    command: npm run worker
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://cryptocraft_user:dev_password@postgres:5432/cryptocraft_dev
+      - REDIS_URL=redis://redis:6379
+      - SOLANA_RPC_URL=https://api.devnet.solana.com
+      - LOG_LEVEL=debug
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - cryptocraft-network
+    restart: unless-stopped
+
+  # Bull Dashboard (optional, for development)
+  bull-dashboard:
+    image: deadly0/bull-board
+    container_name: cryptocraft-bull-dashboard-dev
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+    ports:
+      - "3001:3000"
+    depends_on:
+      - redis
+    networks:
+      - cryptocraft-network
+    restart: unless-stopped
+    profiles:
+      - debug
+
+  # pgAdmin (optional, for development)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: cryptocraft-pgadmin-dev
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@cryptocraft.com
+      - PGADMIN_DEFAULT_PASSWORD=admin_password
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - cryptocraft-network
+    restart: unless-stopped
+    profiles:
+      - debug
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+networks:
+  cryptocraft-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

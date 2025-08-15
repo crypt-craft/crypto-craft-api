@@ -1,0 +1,116 @@
+
+> cryptocraft-api@1.0.0 lint
+> eslint src/**/*.ts
+
+
+/Users/user/Projects/CryptoCraft/src/core/AdapterFactory.ts
+    1:1   error  Definition for rule '@typescript-eslint/no-explicit-any' was not found  @typescript-eslint/no-explicit-any
+    1:1   error  Definition for rule '@typescript-eslint/no-unused-vars' was not found   @typescript-eslint/no-unused-vars
+    1:1   error  Definition for rule '@typescript-eslint/prefer-as-const' was not found  @typescript-eslint/prefer-as-const
+    8:8   error  'Logger' is defined but never used                                      no-unused-vars
+   12:39  error  'code' is defined but never used                                        no-unused-vars
+   47:1   error  Expected indentation of 6 spaces but found 8                            indent
+   48:1   error  Expected indentation of 8 spaces but found 10                           indent
+   56:1   error  Expected indentation of 6 spaces but found 8                            indent
+   57:1   error  Expected indentation of 8 spaces but found 10                           indent
+   58:1   error  Expected indentation of 10 spaces but found 12                          indent
+   59:1   error  Expected indentation of 10 spaces but found 12                          indent
+   60:1   error  Expected indentation of 8 spaces but found 10                           indent
+  133:1   error  Expected indentation of 4 spaces but found 6                            indent
+  134:1   error  Expected indentation of 6 spaces but found 8                            indent
+  135:1   error  Expected indentation of 8 spaces but found 10                           indent
+  136:1   error  Expected indentation of 8 spaces but found 10                           indent
+  137:1   error  Expected indentation of 8 spaces but found 10                           indent
+  138:1   error  Expected indentation of 6 spaces but found 8                            indent
+  148:1   error  Expected indentation of 4 spaces but found 6                            indent
+  149:1   error  Expected indentation of 6 spaces but found 8                            indent
+  161:1   error  Expected indentation of 4 spaces but found 6                            indent
+  162:1   error  Expected indentation of 6 spaces but found 8                            indent
+  163:1   error  Expected indentation of 8 spaces but found 10                           indent
+  164:1   error  Expected indentation of 6 spaces but found 8                            indent
+  165:1   error  Expected indentation of 6 spaces but found 8                            indent
+  187:1   error  Expected indentation of 4 spaces but found 6                            indent
+  188:1   error  Expected indentation of 6 spaces but found 8                            indent
+  189:1   error  Expected indentation of 8 spaces but found 10                           indent
+  190:1   error  Expected indentation of 8 spaces but found 10                           indent
+  191:1   error  Expected indentation of 8 spaces but found 10                           indent
+  192:1   error  Expected indentation of 8 spaces but found 10                           indent
+  193:1   error  Expected indentation of 6 spaces but found 8                            indent
+  195:1   error  Expected indentation of 4 spaces but found 6                            indent
+  196:1   error  Expected indentation of 6 spaces but found 8                            indent
+
+/Users/user/Projects/CryptoCraft/src/core/BlockchainManager.ts
+   1:1   error  Definition for rule '@typescript-eslint/no-explicit-any' was not found  @typescript-eslint/no-explicit-any
+   1:1   error  Definition for rule '@typescript-eslint/no-unused-vars' was not found   @typescript-eslint/no-unused-vars
+   1:1   error  Definition for rule '@typescript-eslint/prefer-as-const' was not found  @typescript-eslint/prefer-as-const
+   7:8   error  'Logger' is defined but never used                                      no-unused-vars
+  11:39  error  'code' is defined but never used                                        no-unused-vars
+
+/Users/user/Projects/CryptoCraft/src/database/prisma.ts
+    1:1   error    Definition for rule '@typescript-eslint/no-explicit-any' was not found  @typescript-eslint/no-explicit-any
+    1:1   error    Definition for rule '@typescript-eslint/no-unused-vars' was not found   @typescript-eslint/no-unused-vars
+    1:1   error    Definition for rule '@typescript-eslint/prefer-as-const' was not found  @typescript-eslint/prefer-as-const
+   97:1   warning  This line has a length of 126. Maximum allowed is 120                   max-len
+   97:10  error    'prisma' is defined but never used                                      no-unused-vars
+  140:11  error    'client' is assigned a value but never used                             no-unused-vars
+
+/Users/user/Projects/CryptoCraft/src/middleware/auth.ts
+    1:1   error  Definition for rule '@typescript-eslint/no-explicit-any' was not found  @typescript-eslint/no-explicit-any
+    1:1   error  Definition for rule '@typescript-eslint/no-unused-vars' was not found   @typescript-eslint/no-unused-vars
+    1:1   error  Definition for rule '@typescript-eslint/prefer-as-const' was not found  @typescript-eslint/prefer-as-const
+   28:3   error  'USER' is defined but never used                                        no-unused-vars
+   29:3   error  'ADMIN' is defined but never used                                       no-unused-vars
+   30:3   error  'MODERATOR' is defined but never used                                   no-unused-vars
+   31:3   error  'DEVELOPER' is defined but never used                                   no-unused-vars
+   39:39  error  'code' is defined but never used                                        no-unused-vars
+   39:60  error  'statusCode' is assigned a value but never used                         no-unused-vars
+  220:54  error  'req' is defined but never used                                         no-unused-vars
+  307:50  error  'next' is defined but never used                                        no-unused-vars
+
+/Users/user/Projects/CryptoCraft/src/services/AirdropService.ts
+    1:1   error    Definition for rule '@typescript-eslint/no-explicit-any' was not found  @typescript-eslint/no-explicit-any
+    1:1   error    Definition for rule '@typescript-eslint/no-unused-vars' was not found   @typescript-eslint/no-unused-vars
+    1:1   error    Definition for rule '@typescript-eslint/prefer-as-const' was not found  @typescript-eslint/prefer-as-const
+    9:35  error    'AirdropRecipient' is defined but never used                            no-unused-vars
+  398:1   warning  This line has a length of 122. Maximum allowed is 120                   max-len
+
+/Users/user/Projects/CryptoCraft/src/services/AuthService.ts
+  1:1   error  Definition for rule '@typescript-eslint/no-explicit-any' was not found  @typescript-eslint/no-explicit-any
+  1:1   error  Definition for rule '@typescript-eslint/no-unused-vars' was not found   @typescript-eslint/no-unused-vars
+  1:1   error  Definition for rule '@typescript-eslint/prefer-as-const' was not found  @typescript-eslint/prefer-as-const
+  8:10  error  'generateJWT' is defined but never used                                 no-unused-vars
+
+/Users/user/Projects/CryptoCraft/src/services/TokenService.ts
+   1:1   error    Definition for rule '@typescript-eslint/no-explicit-any' was not found  @typescript-eslint/no-explicit-any
+   1:1   error    Definition for rule '@typescript-eslint/no-unused-vars' was not found   @typescript-eslint/no-unused-vars
+   1:1   error    Definition for rule '@typescript-eslint/prefer-as-const' was not found  @typescript-eslint/prefer-as-const
+  53:13  error    'blockchainManager' is defined but never used                           no-unused-vars
+  71:1   warning  This line has a length of 128. Maximum allowed is 120                   max-len
+  76:11  error    'user' is never reassigned. Use 'const' instead                         prefer-const
+
+/Users/user/Projects/CryptoCraft/src/services/TransactionBuilder.ts
+    1:1   error  Definition for rule '@typescript-eslint/no-explicit-any' was not found  @typescript-eslint/no-explicit-any
+    1:1   error  Definition for rule '@typescript-eslint/no-unused-vars' was not found   @typescript-eslint/no-unused-vars
+    1:1   error  Definition for rule '@typescript-eslint/prefer-as-const' was not found  @typescript-eslint/prefer-as-const
+   26:3   error  'createSetAuthorityInstruction' is defined but never used               no-unused-vars
+   27:3   error  'AuthorityType' is defined but never used                               no-unused-vars
+   30:10  error  'validateCreateToken' is defined but never used                         no-unused-vars
+  180:13  error  'metadataData' is assigned a value but never used                       no-unused-vars
+  192:26  error  'lastValidBlockHeight' is assigned a value but never used               no-unused-vars
+
+/Users/user/Projects/CryptoCraft/src/utils/logger.ts
+  1:1  error  Definition for rule '@typescript-eslint/no-explicit-any' was not found  @typescript-eslint/no-explicit-any
+  1:1  error  Definition for rule '@typescript-eslint/no-unused-vars' was not found   @typescript-eslint/no-unused-vars
+  1:1  error  Definition for rule '@typescript-eslint/prefer-as-const' was not found  @typescript-eslint/prefer-as-const
+
+/Users/user/Projects/CryptoCraft/src/utils/validation.ts
+    1:1   error    Definition for rule '@typescript-eslint/no-explicit-any' was not found  @typescript-eslint/no-explicit-any
+    1:1   error    Definition for rule '@typescript-eslint/no-unused-vars' was not found   @typescript-eslint/no-unused-vars
+    1:1   error    Definition for rule '@typescript-eslint/prefer-as-const' was not found  @typescript-eslint/prefer-as-const
+  104:39  error    'details' is defined but never used                                     no-unused-vars
+  199:1   warning  This line has a length of 122. Maximum allowed is 120                   max-len
+  208:11  error    'valid' is assigned a value but never used                              no-unused-vars
+
+✖ 88 problems (84 errors, 4 warnings)
+  30 errors and 0 warnings potentially fixable with the `--fix` option.
+

@@ -1,0 +1,124 @@
+# Simplified Development Environment
+# Use this for faster development without nginx
+# Docker Compose version removed (using compose v2)
+
+services:
+  # API Service (без nginx для прискорення розробки)
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.local
+    container_name: cryptocraft-api-dev
+    env_file:
+      - ./.env.local
+    ports:
+      - "${API_BIND_IP:-127.0.0.1}:4000:4000"  # Bind to specific interface
+    environment:
+      - NODE_ENV=development
+      - PORT=4000
+      - DATABASE_URL=postgresql://cryptocraft_user:dev_password@postgres:5432/cryptocraft_dev
+      - REDIS_URL=redis://redis:6379
+      - SOLANA_RPC_URL=https://api.devnet.solana.com
+      - JWT_SECRET=dev_jwt_secret_change_in_production
+      # Pinata credentials (use JWT preferred)
+      - PINATA_JWT=${PINATA_JWT}
+      - PINATA_API_KEY=${PINATA_API_KEY}
+      - PINATA_API_SECRET=${PINATA_API_SECRET}
+      - AUTH_TEST_MODE=${AUTH_TEST_MODE:-false}
+      - AIRDROP_TREASURY_TOKEN_ACCOUNT=${AIRDROP_TREASURY_TOKEN_ACCOUNT:-CHANGE_ME_TREASURY_ATA}
+      - AIRDROP_TREASURY_AUTHORITY_PUBKEY=${AIRDROP_TREASURY_AUTHORITY_PUBKEY:-CHANGE_ME_AUTHORITY_PUBKEY}
+      - RATE_LIMIT_RPM=100
+      - LOG_LEVEL=debug
+      - CORS_ORIGIN=${CORS_ORIGIN:-https://app.crypto-craft.local}
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cryptocraft-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: cryptocraft-postgres-dev
+    environment:
+      - POSTGRES_DB=cryptocraft_dev
+      - POSTGRES_USER=cryptocraft_user
+      - POSTGRES_PASSWORD=dev_password
+      - POSTGRES_INITDB_ARGS="--encoding=UTF-8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    ports:
+      - "${POSTGRES_BIND_IP:-127.0.0.1}:5433:5432"  # Bind to specific interface
+    networks:
+      - cryptocraft-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cryptocraft_user -d cryptocraft_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache and Queue
+  redis:
+    image: redis:7-alpine
+    container_name: cryptocraft-redis-dev
+    ports:
+      - "${REDIS_BIND_IP:-127.0.0.1}:6379:6379"  # Bind to specific interface
+    volumes:
+      - redis_data:/data
+    networks:
+      - cryptocraft-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+  # pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: cryptocraft-pgadmin-dev
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@cryptocraft.dev
+      - PGADMIN_DEFAULT_PASSWORD=admin
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - cryptocraft-network
+    restart: unless-stopped
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+networks:
+  cryptocraft-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
