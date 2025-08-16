@@ -30,6 +30,14 @@ services:
       - RATE_LIMIT_RPM=100
       - LOG_LEVEL=debug
       - CORS_ORIGIN=${CORS_ORIGIN:-https://app.crypto-craft.local}
+      # MinIO media (dev defaults ok)
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-media.crypto-craft.net}
+      - MINIO_PORT=${MINIO_PORT:-443}
+      - MINIO_USE_SSL=${MINIO_USE_SSL:-true}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-u0aevRYWjRHxxIxJBhUG}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-BUb2ZGMbTZkGZr2X8VIqdLGxyIO8MuMBivP9zTt1}
+      - MINIO_BUCKET=${MINIO_BUCKET:-tokens-media}
+      - MINIO_PUBLIC_BASE_URL=${MINIO_PUBLIC_BASE_URL:-https://media.crypto-craft.net}
     volumes:
       - .:/app
       - /app/node_modules

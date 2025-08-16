@@ -245,6 +245,97 @@ router.get('/network-info', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /transactions/metadata/:mint
+ * Діагностика: перевірити наявність Metaplex Metadata на чейні і прочитати поля
+ */
+router.get('/metadata/:mint', async (req: Request, res: Response) => {
+  try {
+    const { mint } = req.params;
+    const svc = new TransactionBuilderService();
+    if (!svc.validatePublicKey(mint)) {
+      return res.status(400).json({ success: false, error: 'Invalid mint address' });
+    }
+    const mintPk = new (await import('@solana/web3.js')).PublicKey(mint);
+    const TOKEN_METADATA_PROGRAM_ID = new (await import('@solana/web3.js')).PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
+    const [metadataPda] = (await import('@solana/web3.js')).PublicKey.findProgramAddressSync([
+      Buffer.from('metadata'),
+      TOKEN_METADATA_PROGRAM_ID.toBuffer(),
+      mintPk.toBuffer()
+    ], TOKEN_METADATA_PROGRAM_ID);
+
+    const info = await (svc as any).connection.getAccountInfo(metadataPda);
+    if (!info) {
+      return res.status(404).json({
+        success: true,
+        exists: false,
+        mint,
+        metadataPda: metadataPda.toBase58()
+      });
+    }
+    let decoded: any = null;
+    try {
+      const mpl = await import('@metaplex-foundation/mpl-token-metadata');
+      if ((mpl as any).Metadata?.fromAccountAddress) {
+        decoded = await (mpl as any).Metadata.fromAccountAddress((svc as any).connection, metadataPda);
+      } else if ((mpl as any).Metadata?.deserialize) {
+        const arr = (mpl as any).Metadata.deserialize(info.data);
+        decoded = Array.isArray(arr) ? arr[0] : null;
+      }
+    } catch (_e) {}
+    const name: string | undefined = decoded?.data?.name || decoded?.name;
+    const symbol: string | undefined = decoded?.data?.symbol || decoded?.symbol;
+    const uri: string | undefined = decoded?.data?.uri || decoded?.uri;
+    const updateAuthority: string | undefined = typeof decoded?.updateAuthority === 'string' ? decoded.updateAuthority : (decoded?.updateAuthority?.toBase58?.() || undefined);
+    return res.json({
+      success: true,
+      exists: true,
+      mint,
+      metadataPda: metadataPda.toBase58(),
+      name,
+      symbol,
+      uri,
+      updateAuthority,
+      dataLen: info.data.length
+    });
+  } catch (error) {
+    Logger.error('Metadata diagnostics error', { error });
+    return res.status(500).json({ success: false, error: 'Failed to fetch metadata diagnostics' });
+  }
+});
+
+/**
+ * GET /transactions/metadata-uri-check?uri=...
+ * Діагностика: перевірити доступність і тип контенту метаданих
+ */
+router.get('/metadata-uri-check', async (req: Request, res: Response) => {
+  try {
+    const uri = (req.query.uri as string) || '';
+    if (!uri) return res.status(400).json({ success: false, error: 'uri is required' });
+    const normalized = uri.startsWith('ipfs://') ? `https://gateway.pinata.cloud/ipfs/${uri.replace('ipfs://','')}` : uri;
+    const response = await fetch(normalized, { method: 'GET' });
+    const contentType = response.headers.get('content-type') || '';
+    let json: any = null;
+    if (contentType.toLowerCase().includes('application/json')) {
+      try { json = await response.json(); } catch (_e) {}
+    }
+    return res.json({
+      success: response.ok,
+      status: response.status,
+      uri: normalized,
+      contentType,
+      jsonPreview: json ? {
+        name: json.name,
+        symbol: json.symbol,
+        image: json.image,
+      } : null
+    });
+  } catch (error) {
+    Logger.error('Metadata URI diagnostics error', { error });
+    return res.status(500).json({ success: false, error: 'Failed to fetch metadata URI' });
+  }
+});
+
+/**
  * POST /transactions/validate-address
  * Валідація Solana адреси
  */

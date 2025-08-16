@@ -85,6 +85,13 @@ X-API-Key: <api_key>
 ## Tokens
 ## IPFS / Pinata
 
+## Media (MinIO)
+### GET /api/media/test
+Перевіряє підключення до MinIO та наявність бакета.
+
+### POST /api/media/upload
+Завантажує файл (multipart/form-data, поле `file`) у MinIO та повертає публічний `imageUrl`.
+
 ### GET /api/ipfs/test-auth
 Перевіряє налаштування Pinata креденшалів всередині сервісу.
 

@@ -316,6 +316,14 @@ const rawOrigins = process.env.CORS_ORIGIN || 'https://app.crypto-craft.local,ht
     const ipfsRoutes = require('@/api/routes/ipfsRoutes').default;
     this.app.use('/api/ipfs', ipfsRoutes);
 
+    // Media routes (MinIO uploads)
+    try {
+      const mediaRoutes = require('@/api/routes/mediaRoutes').default;
+      this.app.use('/api/media', mediaRoutes);
+    } catch (e) {
+      Logger.warn('Media routes not loaded', { error: (e as Error)?.message });
+    }
+
     // Airdrop root placeholder only (do not block sub-routes)
     this.app.get('/api/airdrops', (req, res) => {
       res.status(501).json({

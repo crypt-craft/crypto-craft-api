@@ -279,16 +279,18 @@ export class TransactionBuilderService {
         mintPk.toBuffer()
       ], TOKEN_METADATA_PROGRAM_ID);
 
-      // Validate URI availability (HEAD) and JSON schema (GET minimal)
-      const uri = params.uri;
+      // Validate URI availability and JSON schema (GET minimal). Some gateways don't support HEAD reliably.
+      // Normalize URI: convert ipfs://CID to an HTTPS gateway for broader compatibility
+      const uri = params.uri?.startsWith('ipfs://')
+        ? `https://gateway.pinata.cloud/ipfs/${params.uri.replace('ipfs://','')}`
+        : params.uri;
       try {
-        const head = await fetch(uri, { method: 'HEAD' });
-        if (!head.ok) {
-          return { success: false, error: `Metadata URL not reachable (status ${head.status})` };
-        }
         const getRes = await fetch(uri, { method: 'GET' });
+        if (!getRes.ok) {
+          return { success: false, error: `Metadata URL not reachable (status ${getRes.status})` };
+        }
         const contentType = getRes.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
+        if (!contentType.toLowerCase().includes('application/json')) {
           return { success: false, error: 'Metadata URL must return application/json' };
         }
         const json = await getRes.json();
@@ -312,29 +314,54 @@ export class TransactionBuilderService {
           if (!mintAuthority || !mintAuthority.equals(userPk)) {
             return { success: false, error: 'Metadata account not found and caller is not mint authority' };
           }
-
-          const createIx = (mpl as any).createCreateMetadataAccountV3Instruction(
-            {
-              metadata: metadataPda,
-              mint: mintPk,
-              mintAuthority: userPk,
-              payer: userPk,
-              updateAuthority: userPk
-            },
-            {
-              data: {
-                name: (params.name || '').slice(0, 32),
-                symbol: (params.symbol || '').slice(0, 10),
-                uri: uri.slice(0, 200),
-                sellerFeeBasisPoints: 0,
-                creators: null,
-                collection: null,
-                uses: null
-              },
-              isMutable: true,
-              collectionDetails: null
-            }
-          );
+          const createIx = (mpl as any).createCreateMetadataAccountV2Instruction
+            ? (mpl as any).createCreateMetadataAccountV2Instruction(
+                {
+                  metadata: metadataPda,
+                  mint: mintPk,
+                  mintAuthority: userPk,
+                  payer: userPk,
+                  updateAuthority: userPk
+                },
+                {
+                  createMetadataAccountArgsV2: {
+                    data: {
+                      name: (params.name || '').slice(0, 32),
+                      symbol: (params.symbol || '').slice(0, 10),
+                      uri: uri.slice(0, 200),
+                      sellerFeeBasisPoints: 0,
+                      creators: null,
+                      collection: null,
+                      uses: null
+                    },
+                    isMutable: true
+                  }
+                }
+              )
+            : (mpl as any).createCreateMetadataAccountV3Instruction(
+                {
+                  metadata: metadataPda,
+                  mint: mintPk,
+                  mintAuthority: userPk,
+                  payer: userPk,
+                  updateAuthority: userPk
+                },
+                {
+                  createMetadataAccountArgsV3: {
+                    data: {
+                      name: (params.name || '').slice(0, 32),
+                      symbol: (params.symbol || '').slice(0, 10),
+                      uri: uri.slice(0, 200),
+                      sellerFeeBasisPoints: 0,
+                      creators: null,
+                      collection: null,
+                      uses: null
+                    },
+                    isMutable: true,
+                    collectionDetails: null
+                  }
+                }
+              );
           transaction.add(createIx);
         } catch (e) {
           return { success: false, error: 'Failed to prepare create metadata instruction' };
@@ -344,6 +371,7 @@ export class TransactionBuilderService {
         const data = {
           name: (params.name || '').slice(0, 32),
           symbol: (params.symbol || '').slice(0, 10),
+          // деякі валідатори Metaplex вимагають <= 200 символів
           uri: uri.slice(0, 200),
           sellerFeeBasisPoints: 0,
           creators: null,
@@ -432,27 +460,32 @@ export class TransactionBuilderService {
         imageField = `ipfs://${pinataGatewayMatch[1]}`;
       }
 
+      const imageHttps = imageField.startsWith('ipfs://')
+        ? `https://gateway.pinata.cloud/ipfs/${imageField.replace('ipfs://','')}`
+        : (imageField || '');
       const offchainMetadata = {
-        name: validatedParams.name,
-        symbol: validatedParams.symbol,
+        name: validatedParams.name.slice(0, 32),
+        symbol: validatedParams.symbol.slice(0, 10),
         description: validatedParams.description || '',
-        image: imageField || '',
+        image: imageHttps,
         external_url: validatedParams.externalUrl || '',
-        // Minimal compliant fields for fungible token metadata
         properties: {
-          category: 'token'
+          category: 'token',
+          files: imageHttps ? [
+            { uri: imageHttps, type: 'image/*' },
+            ...(imageField.startsWith('ipfs://') ? [{ uri: imageField, type: 'image/*' }] : [])
+          ] : []
         }
       } as Record<string, any>;
 
-      let metadataUri = '';
       const ipfsCid = await this.pinJsonToIpfs(offchainMetadata);
-      if (ipfsCid) {
-        // Використовуємо канонічний ipfs:// CID для максимальної сумісності з екосистемою
-        metadataUri = `https://gateway.pinata.cloud/ipfs/${ipfsCid}`;
-      } else {
-        // Фолбек: спробуємо використати image як URI (не рекомендовано, але краще ніж порожньо)
-        metadataUri = offchainMetadata.image || '';
+      if (!ipfsCid) {
+        return {
+          success: false,
+          error: 'Failed to pin metadata JSON to IPFS. Configure PINATA_JWT or API keys to enable on-chain metadata.'
+        };
       }
+      const metadataUri = `https://gateway.pinata.cloud/ipfs/${ipfsCid}`;
 
       // Обчислюємо Metadata PDA
       const TOKEN_METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
@@ -502,32 +535,65 @@ export class TransactionBuilderService {
       );
 
       // 3.1 Створення Metaplex Metadata Account (оновлена підтримка)
+      let metadataIxAdded = false;
       try {
-        const createMetaIx = (mpl as any).createCreateMetadataAccountV3Instruction(
-          {
-            metadata: metadataPda,
-            mint: mintPublicKey,
-            mintAuthority: userPublicKey,
-            payer: userPublicKey,
-            updateAuthority: userPublicKey
-          },
-          {
-            data: {
-              name: validatedParams.name,
-              symbol: validatedParams.symbol,
-              uri: metadataUri,
-              sellerFeeBasisPoints: 0,
-              creators: null,
-              collection: null,
-              uses: null
+        const createMetaIx = (mpl as any).createCreateMetadataAccountV2Instruction
+          ? (mpl as any).createCreateMetadataAccountV2Instruction(
+            {
+              metadata: metadataPda,
+              mint: mintPublicKey,
+              mintAuthority: userPublicKey,
+              payer: userPublicKey,
+              updateAuthority: userPublicKey
             },
-            isMutable: true,
-            collectionDetails: null
-          }
-        );
+            {
+              createMetadataAccountArgsV2: {
+                data: {
+                  name: validatedParams.name.slice(0, 32),
+                  symbol: validatedParams.symbol.slice(0, 10),
+                  uri: metadataUri,
+                  sellerFeeBasisPoints: 0,
+                  creators: null,
+                  collection: null,
+                  uses: null
+                },
+                isMutable: true
+              }
+            }
+          )
+          : (mpl as any).createCreateMetadataAccountV3Instruction ?
+          (mpl as any).createCreateMetadataAccountV3Instruction(
+            {
+              metadata: metadataPda,
+              mint: mintPublicKey,
+              mintAuthority: userPublicKey,
+              payer: userPublicKey,
+              updateAuthority: userPublicKey
+            },
+            {
+              createMetadataAccountArgsV3: {
+                data: {
+                  name: validatedParams.name.slice(0, 32),
+                  symbol: validatedParams.symbol.slice(0, 10),
+                  uri: metadataUri,
+                  sellerFeeBasisPoints: 0,
+                  creators: null,
+                  collection: null,
+                  uses: null
+                },
+                isMutable: true,
+                collectionDetails: null
+              }
+            }
+          ) : (() => { throw new Error('No suitable create metadata instruction available'); })();
         transaction.add(createMetaIx);
+        metadataIxAdded = true;
       } catch (e) {
         Logger.warn('Failed to add create metadata instruction', { error: (e as Error)?.message });
+        return {
+          success: false,
+          error: 'Failed to prepare metadata instruction. Aborting token creation to avoid mint without metadata.'
+        };
       }
 
       // 4. Mint початкової кількості токенів
